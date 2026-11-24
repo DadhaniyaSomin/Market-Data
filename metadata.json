@@ -1,0 +1,6 @@
+{
+  "name": "PreOpen NSE — Intraday Pre-Market Shortlist",
+  "description": "Deterministic 5-point intraday pre-market scanner, position sizer, and AI decision-support dashboard for NSE Indian equities.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
