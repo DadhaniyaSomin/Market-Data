@@ -1,6 +1,8 @@
 import type {
+  DirectionMode,
   FilterConfig,
   NewsItem,
+  SectorBreadthItem,
   StockEvaluation,
   StockMarketSnapshot,
 } from '../data/types.ts';
@@ -54,7 +56,6 @@ export function evaluateUniverse(
     };
   });
 
-  // Sort all candidates cleanly by score desc, then RS magnitude desc
   return evaluations.sort((a, b) => {
     if (b.totalScore !== a.totalScore) return b.totalScore - a.totalScore;
     return (
@@ -67,10 +68,51 @@ export function evaluateUniverse(
 export function selectTopShortlist(
   evaluations: StockEvaluation[],
   maxStocks: number,
+  directionMode: DirectionMode = 'BOTH',
 ): StockEvaluation[] {
   const clampedMax = Math.max(3, Math.min(5, Math.round(maxStocks)));
-  return evaluations
-    .filter((ev) => ev.eligibleForShortlist && ev.direction !== 'NEUTRAL')
-    .concat(evaluations.filter((ev) => ev.eligibleForShortlist && ev.direction === 'NEUTRAL'))
+  const eligible = evaluations.filter((ev) => ev.eligibleForShortlist);
+
+  if (directionMode === 'LONG_ONLY') {
+    return eligible
+      .filter((ev) => ev.direction === 'LONG')
+      .slice(0, clampedMax);
+  }
+
+  return eligible
+    .filter((ev) => ev.direction !== 'NEUTRAL')
+    .concat(eligible.filter((ev) => ev.direction === 'NEUTRAL'))
     .slice(0, clampedMax);
+}
+
+export function computeSectorBreadth(evaluations: StockEvaluation[]): SectorBreadthItem[] {
+  const map = new Map<string, StockEvaluation[]>();
+  for (const ev of evaluations) {
+    const sector = ev.snapshot.meta.sector;
+    const list = map.get(sector) ?? [];
+    list.push(ev);
+    map.set(sector, list);
+  }
+
+  const breadth: SectorBreadthItem[] = [];
+  for (const [sector, items] of map.entries()) {
+    const avgChangePct =
+      items.reduce((sum, e) => sum + e.snapshot.changePct, 0) / items.length;
+    const advancers = items.filter((e) => e.snapshot.changePct > 0).length;
+    const decliners = items.filter((e) => e.snapshot.changePct < 0).length;
+    const sortedByChg = [...items].sort((a, b) => b.snapshot.changePct - a.snapshot.changePct);
+    const leader = sortedByChg[0];
+
+    breadth.push({
+      sector,
+      avgChangePct: Number(avgChangePct.toFixed(2)),
+      advancers,
+      decliners,
+      total: items.length,
+      leaderTicker: leader.snapshot.meta.ticker,
+      leaderChangePct: Number(leader.snapshot.changePct.toFixed(2)),
+    });
+  }
+
+  return breadth.sort((a, b) => b.avgChangePct - a.avgChangePct);
 }

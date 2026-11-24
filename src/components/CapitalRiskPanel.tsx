@@ -42,7 +42,7 @@ export function CapitalRiskPanel({
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4 items-end">
         <label className="block space-y-1.5">
           <span className="block text-xs font-medium text-slate-300">
             Total Trading Capital (₹)
@@ -103,6 +103,36 @@ export function CapitalRiskPanel({
                 {count}
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <span className="block text-xs font-medium text-slate-300">
+            Direction Mode
+          </span>
+          <div className="grid grid-cols-2 gap-1.5 p-1 bg-[#0B0F17] border border-slate-700/80 rounded-md">
+            <button
+              type="button"
+              onClick={() => onChange({ ...config, directionMode: 'BOTH' })}
+              className={`py-1.5 px-2 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                config.directionMode === 'BOTH'
+                  ? 'bg-amber-500 text-slate-950 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100'
+              }`}
+            >
+              Both
+            </button>
+            <button
+              type="button"
+              onClick={() => onChange({ ...config, directionMode: 'LONG_ONLY' })}
+              className={`py-1.5 px-2 text-xs font-medium rounded transition-colors whitespace-nowrap ${
+                config.directionMode === 'LONG_ONLY'
+                  ? 'bg-emerald-500 text-slate-950 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100'
+              }`}
+            >
+              Long-Only
+            </button>
           </div>
         </div>
 

@@ -21,9 +21,9 @@ export interface UniverseMeta {
   name: string;
   sector: string;
   aliases: string[];
-  circuitBandPct: number; // e.g. 10 or 20 (NSE F&O stocks have dynamic 10%/no rigid 5% freeze; 5% = restricted)
-  isT2T: boolean; // Trade-to-Trade / BE segment flag
-  freeFloatPct: number; // Approximate NSE free float %
+  circuitBandPct: number;
+  isT2T: boolean;
+  freeFloatPct: number;
   isFnO: boolean;
 }
 
@@ -37,11 +37,14 @@ export interface OHLCVBar {
 }
 
 export interface NewsItem {
+  id: string;
   title: string;
+  summary: string;
   link: string;
   pubDate: string;
   source: string;
   matchedSymbols: string[];
+  matchedSectors: string[];
   isResultsNews: boolean;
   isSectorNews: boolean;
 }
@@ -58,12 +61,12 @@ export interface StockMarketSnapshot {
   changePct: number;
   gapPct: number;
   volumeRatio: number;
-  bidAskSpreadPct: number | null; // Null if L1 quote is unavailable on provider
+  bidAskSpreadPct: number | null;
   preOpenIndicativePrice: number | null;
   preOpenIndicativeVolume: number | null;
   preOpenAvailable: boolean;
-  dailyBars: OHLCVBar[]; // ~25-30 daily bars
-  intraday15mBars: OHLCVBar[]; // Latest session 15-min bars
+  dailyBars: OHLCVBar[];
+  intraday15mBars: OHLCVBar[];
   dataTimestamp: string;
   source: string;
 }
@@ -84,6 +87,7 @@ export interface MarketContext {
   giftNifty: IndexQuote;
   nifty50: IndexQuote;
   bankNifty: IndexQuote;
+  indiaVix: IndexQuote;
   usClose: IndexQuote;
   brentCrude: IndexQuote;
   usdInr: IndexQuote;
@@ -93,21 +97,34 @@ export interface MarketContext {
   source: string;
 }
 
-export interface FilterConfig {
-  minAvgVolume: number; // Default 1_000_000 shares
-  maxSpreadPct: number; // Default 0.1 (%)
-  minAtrPct: number; // Default 1.5 (%)
-  maxAtrPct: number; // Default 2.5 (%)
-  minPrice: number; // Default 100 (INR)
-  minFreeFloatPct: number; // Default 25 (%)
-  unusualVolumeMultiplier: number; // Default 1.5x 20-day avg
-  pricedInMovePct: number; // Default 3.0%
+export interface SectorBreadthItem {
+  sector: string;
+  avgChangePct: number;
+  advancers: number;
+  decliners: number;
+  total: number;
+  leaderTicker: string;
+  leaderChangePct: number;
 }
 
+export interface FilterConfig {
+  minAvgVolume: number;
+  maxSpreadPct: number;
+  minAtrPct: number;
+  maxAtrPct: number;
+  minPrice: number;
+  minFreeFloatPct: number;
+  unusualVolumeMultiplier: number;
+  pricedInMovePct: number;
+}
+
+export type DirectionMode = 'BOTH' | 'LONG_ONLY';
+
 export interface CapitalConfig {
-  totalCapital: number; // INR, default 500000
-  riskPerTradePct: number; // Default 1.0 (%)
-  maxStocks: number; // 3-5, default 4
+  totalCapital: number;
+  riskPerTradePct: number;
+  maxStocks: number;
+  directionMode: DirectionMode;
 }
 
 export type CriterionKey =
@@ -149,7 +166,7 @@ export interface StockEvaluation {
   matchedNews: NewsItem[];
   direction: TradeDirection;
   criteria: Record<CriterionKey, CriterionEvaluation>;
-  totalScore: number; // 0 to 10
+  totalScore: number;
   hardFailLiquidity: boolean;
   hardFailRestrictions: boolean;
   eligibleForShortlist: boolean;
@@ -162,7 +179,7 @@ export interface PositionSizing {
   entry: number;
   stopLoss: number;
   stopLossMethod: string;
-  target: number; // 1:2 R:R
+  target: number;
   riskPerShare: number;
   rawRiskAmount: number;
   rawQuantity: number;
@@ -197,17 +214,78 @@ export interface ShortlistItem {
   aiRationale: AIRationaleItem | null;
 }
 
+export interface CorrelationPairAlert {
+  tickerA: string;
+  tickerB: string;
+  sectorA: string;
+  sectorB: string;
+  correlation: number;
+  sameSector: boolean;
+}
+
+export interface CorrelationMatrixResult {
+  tickers: string[];
+  sectors: string[];
+  matrix: Array<Array<number | null>>; // N x N Pearson correlation (-1 to +1)
+  lookbackSessions: number;
+  avgPairwiseCorrelation: number | null;
+  highCorrelationPairs: CorrelationPairAlert[];
+  sameSectorClusters: Array<{ sector: string; tickers: string[] }>;
+  concentrationLevel: 'LOW_CONCENTRATION' | 'MODERATE_OVERLAP' | 'HIGH_CONCENTRATION';
+  summaryNote: string;
+}
+
 export interface ScanResponse {
   session: SessionClockInfo;
   marketContext: MarketContext;
+  sectorBreadth: SectorBreadthItem[];
   preOpenUnavailableNote: string | null;
   dataProviderNote: string | null;
   candidates: StockEvaluation[];
   shortlist: ShortlistItem[];
+  correlation: CorrelationMatrixResult | null;
   newsFeedCount: number;
   newsSource: string;
   dataSource: string;
   generatedAt: string;
+}
+
+export interface NewsImpactItem {
+  id: string;
+  title: string;
+  scope: 'COMPANY' | 'SECTOR' | 'MACRO';
+  targetEntity: string;
+  expectedDirection: 'POSITIVE' | 'NEGATIVE' | 'MIXED' | 'NEUTRAL';
+  sectorReaction: string;
+  companyReaction: string;
+  watchPoint: string;
+  model: string;
+}
+
+export type JournalOutcome =
+  | 'PENDING'
+  | 'TRIGGERED'
+  | 'TARGET_HIT'
+  | 'SL_HIT'
+  | 'NO_ENTRY';
+
+export interface JournalEntry {
+  id: string;
+  savedAt: string;
+  sessionDate: string;
+  ticker: string;
+  name: string;
+  sector: string;
+  direction: 'LONG' | 'SHORT';
+  entry: number;
+  stopLoss: number;
+  target: number;
+  quantity: number;
+  plannedRisk: number;
+  score: number;
+  outcome: JournalOutcome;
+  realizedPnl: number | null;
+  notes: string;
 }
 
 export interface MarketDataProvider {

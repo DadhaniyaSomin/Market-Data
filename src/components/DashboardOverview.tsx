@@ -2,15 +2,18 @@ import { ArrowRight } from 'lucide-react';
 import type { ScanResponse } from '../lib/data/types.ts';
 import { formatInr, formatIstTimestamp, formatPct } from '../lib/format.ts';
 import type { ChecklistItem } from './ChecklistPanel.tsx';
+import { SectorRiskExposureWidget } from './SectorRiskExposureWidget.tsx';
 
 interface DashboardOverviewProps {
   scan: ScanResponse;
+  totalCapital: number;
   checklist: ChecklistItem[];
   onGoToPreOpen: () => void;
 }
 
 export function DashboardOverview({
   scan,
+  totalCapital,
   checklist,
   onGoToPreOpen,
 }: DashboardOverviewProps) {
@@ -65,6 +68,12 @@ export function DashboardOverview({
           </div>
         </div>
       </div>
+
+      <SectorRiskExposureWidget
+        shortlist={scan.shortlist}
+        totalCapital={totalCapital}
+        onGoToPreOpen={onGoToPreOpen}
+      />
 
       <section className="bg-[#111827] border border-slate-800/90 rounded-lg overflow-hidden">
         <div className="p-4 sm:p-5 border-b border-slate-800/90 flex flex-wrap items-center justify-between gap-3">

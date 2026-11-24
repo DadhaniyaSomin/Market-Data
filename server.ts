@@ -17,9 +17,11 @@ import type {
 import { NSE_UNIVERSE } from './src/lib/data/universe.ts';
 import { YahooMarketDataAdapter } from './src/lib/data/yahooAdapter.ts';
 import { DEFAULT_FILTER_CONFIG } from './src/lib/engine/filters.ts';
-import { evaluateUniverse, selectTopShortlist } from './src/lib/engine/scoring.ts';
+import { computeShortlistCorrelationMatrix } from './src/lib/engine/correlation.ts';
+import { computeSectorBreadth, evaluateUniverse, selectTopShortlist } from './src/lib/engine/scoring.ts';
 import { computePositionSizing, DEFAULT_CAPITAL_CONFIG } from './src/lib/engine/sizing.ts';
 import { getIstSessionInfo } from './src/lib/session/istClock.ts';
+import { analyzeNewsMarketImpact } from './src/server/aiNewsImpact.ts';
 import { generateShortlistRationales, type RationaleInputStock } from './src/server/aiRationale.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -66,7 +68,7 @@ interface SnapshotCache {
 }
 
 let scanCache: SnapshotCache | null = null;
-const CACHE_TTL_MS = 180_000; // 3-minute cache protects Twelve Data API credits
+const CACHE_TTL_MS = 180_000;
 
 function sanitizeFilterConfig(raw: unknown): FilterConfig {
   const input = (raw && typeof raw === 'object' ? raw : {}) as Partial<FilterConfig>;
@@ -106,6 +108,7 @@ function sanitizeCapitalConfig(raw: unknown): CapitalConfig {
     totalCapital: clamp(input.totalCapital, DEFAULT_CAPITAL_CONFIG.totalCapital, 10_000, 100_000_000),
     riskPerTradePct: clamp(input.riskPerTradePct, DEFAULT_CAPITAL_CONFIG.riskPerTradePct, 0.1, 5.0),
     maxStocks: Math.round(clamp(input.maxStocks, DEFAULT_CAPITAL_CONFIG.maxStocks, 3, 5)),
+    directionMode: input.directionMode === 'LONG_ONLY' ? 'LONG_ONLY' : 'BOTH',
   };
 }
 
@@ -124,7 +127,7 @@ async function getMarketSnapshotBundle(forceRefresh = false): Promise<SnapshotCa
   const [marketContext, universeResult, newsResult] = await Promise.all([
     adapter.getMarketContext(),
     adapter.getUniverseSnapshots(NSE_UNIVERSE),
-    fetchMarketRssNews(NSE_UNIVERSE),
+    fetchMarketRssNews(NSE_UNIVERSE, forceRefresh),
   ]);
 
   scanCache = {
@@ -175,13 +178,20 @@ async function startServer() {
         filterConfig,
       );
 
-      const topSelected = selectTopShortlist(candidates, capitalConfig.maxStocks);
+      const sectorBreadth = computeSectorBreadth(candidates);
+      const topSelected = selectTopShortlist(
+        candidates,
+        capitalConfig.maxStocks,
+        capitalConfig.directionMode,
+      );
       const shortlist: ShortlistItem[] = topSelected.map((evaluation, idx) => ({
         rank: idx + 1,
         evaluation,
         sizing: computePositionSizing(evaluation, capitalConfig, topSelected.length),
         aiRationale: null,
       }));
+
+      const correlation = computeShortlistCorrelationMatrix(topSelected);
 
       const preOpenUnavailableNote = !bundle.preOpenAvailable
         ? `Pre-open order-book data is unavailable on ${bundle.dataSource} — falling back to previous session close & Nifty/GIFT Nifty direction.`
@@ -190,10 +200,12 @@ async function startServer() {
       const payload: ScanResponse = {
         session,
         marketContext: bundle.marketContext,
+        sectorBreadth,
         preOpenUnavailableNote,
         dataProviderNote: bundle.dataProviderNote,
         candidates,
         shortlist,
+        correlation,
         newsFeedCount: bundle.newsItems.length,
         newsSource: bundle.newsSource,
         dataSource: bundle.dataSource,
@@ -225,6 +237,42 @@ async function startServer() {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'AI rationale generation failed';
       res.status(500).json({ rationales: [], error: message });
+    }
+  });
+
+  app.get('/api/news', async (req, res) => {
+    try {
+      const forceRefresh = req.query.refresh === '1';
+      const news = await fetchMarketRssNews(NSE_UNIVERSE, forceRefresh);
+      res.json({
+        items: news.items,
+        source: news.sourceSummary,
+        fetchedAt: news.fetchedAt,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to fetch market news';
+      res.status(502).json({ error: message });
+    }
+  });
+
+  app.post('/api/news-impact', async (req, res) => {
+    try {
+      const headlines = Array.isArray(req.body?.headlines) ? (req.body.headlines as NewsItem[]) : [];
+      const sectorContextSummary =
+        typeof req.body?.sectorContextSummary === 'string'
+          ? req.body.sectorContextSummary.slice(0, 600)
+          : 'NSE Equities Pre-Market Session';
+
+      if (headlines.length === 0 || headlines.length > 8) {
+        res.status(400).json({ error: 'Provide between 1 and 8 headlines to analyze.' });
+        return;
+      }
+
+      const result = await analyzeNewsMarketImpact(headlines, sectorContextSummary);
+      res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'AI news impact analysis failed';
+      res.status(500).json({ impacts: [], error: message });
     }
   });
 

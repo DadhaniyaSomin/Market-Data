@@ -1,12 +1,14 @@
 import {
   Activity,
   Bookmark,
+  BookOpen,
   LayoutDashboard,
+  Newspaper,
   Settings,
   X,
 } from 'lucide-react';
 
-export type NavTab = 'dashboard' | 'preopen' | 'watchlist' | 'settings';
+export type NavTab = 'dashboard' | 'preopen' | 'news' | 'journal' | 'watchlist' | 'settings';
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -14,6 +16,7 @@ interface SidebarProps {
   mobileOpen: boolean;
   onCloseMobile: () => void;
   watchlistCount: number;
+  journalCount: number;
 }
 
 const NAV_ITEMS: Array<{
@@ -23,6 +26,8 @@ const NAV_ITEMS: Array<{
 }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'preopen', label: 'Intraday Pre-Open', icon: Activity },
+  { id: 'news', label: 'Latest News', icon: Newspaper },
+  { id: 'journal', label: 'Trade Journal', icon: BookOpen },
   { id: 'watchlist', label: 'Watchlist', icon: Bookmark },
   { id: 'settings', label: 'Settings', icon: Settings },
 ];
@@ -33,6 +38,7 @@ export function Sidebar({
   mobileOpen,
   onCloseMobile,
   watchlistCount,
+  journalCount,
 }: SidebarProps) {
   const navContent = (
     <div className="flex h-full flex-col justify-between bg-[#0E131D] border-r border-slate-800/80 px-4 py-5">
@@ -55,6 +61,13 @@ export function Sidebar({
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
+            const count =
+              item.id === 'watchlist'
+                ? watchlistCount
+                : item.id === 'journal'
+                  ? journalCount
+                  : 0;
+
             return (
               <button
                 key={item.id}
@@ -73,9 +86,9 @@ export function Sidebar({
                   <Icon className="w-4 h-4 shrink-0" />
                   <span>{item.label}</span>
                 </span>
-                {item.id === 'watchlist' && watchlistCount > 0 && (
+                {count > 0 && (
                   <span className="font-mono text-xs text-slate-400 tabular-nums">
-                    {watchlistCount}
+                    {count}
                   </span>
                 )}
               </button>
@@ -97,12 +110,10 @@ export function Sidebar({
 
   return (
     <>
-      {/* Desktop sidebar */}
       <aside className="hidden lg:block w-60 shrink-0 h-screen sticky top-0">
         {navContent}
       </aside>
 
-      {/* Mobile drawer */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 lg:hidden flex">
           <div

@@ -44,6 +44,32 @@ const SYSTEM_INSTRUCTION = [
   '- Keep tone objective and educational (decision-support, not investment advice).',
 ].join('\n');
 
+const MODEL_CANDIDATES = ['gemini-4-hydrogen', 'gemini-3.1-flash-lite'] as const;
+
+function formatGeminiError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : 'Unexpected Gemini API error';
+  try {
+    const parsed = JSON.parse(raw) as { error?: { code?: number; message?: string } };
+    if (parsed?.error?.message) {
+      const code = parsed.error.code ? `(${parsed.error.code}) ` : '';
+      return `${code}${parsed.error.message}`;
+    }
+  } catch {
+    // Raw message is already plain text
+  }
+  return raw;
+}
+
+function isTransientDemandError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : '';
+  return (
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('UNAVAILABLE') ||
+    msg.includes('RESOURCE_EXHAUSTED')
+  );
+}
+
 function validateAndNormalizeRationales(
   rawParsed: unknown,
   allowedTickers: Set<string>,
@@ -85,13 +111,13 @@ export async function generateShortlistRationales(
   stocks: RationaleInputStock[],
   marketContextSummary: string,
 ): Promise<RationaleGenerationResult> {
-  const model = 'gemini-4-hydrogen';
+  const primaryModel = MODEL_CANDIDATES[0];
 
   if (stocks.length === 0) {
     return {
       rationales: [],
       providerUsed: 'gemini',
-      modelUsed: model,
+      modelUsed: primaryModel,
     };
   }
 
@@ -100,30 +126,31 @@ export async function generateShortlistRationales(
     return {
       rationales: [],
       providerUsed: 'gemini',
-      modelUsed: model,
+      modelUsed: primaryModel,
       error: 'GEMINI_API_KEY is not configured in .env / server secrets.',
     };
   }
 
-  try {
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
+  const ai = new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
       },
-    });
+    },
+  });
 
-    const promptPayload = JSON.stringify({
-      marketContext: marketContextSummary,
-      shortlistedStocks: stocks,
-    });
+  const promptPayload = JSON.stringify({
+    marketContext: marketContextSummary,
+    shortlistedStocks: stocks,
+  });
 
-    let response;
+  let lastError: unknown = null;
+
+  for (const model of MODEL_CANDIDATES) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        response = await ai.models.generateContent({
+        const response = await ai.models.generateContent({
           model,
           contents: `Analyze these pre-filtered NSE intraday candidates and return structured JSON:\n${promptPayload}`,
           config: {
@@ -153,43 +180,50 @@ export async function generateShortlistRationales(
             },
           },
         });
-        break;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : '';
-        if (attempt === 0 && (msg.includes('503') || msg.includes('429') || msg.includes('UNAVAILABLE'))) {
-          await new Promise((r) => setTimeout(r, 1200));
-          continue;
+
+        const rawText = (response?.text ?? '[]').trim();
+        const parsed = JSON.parse(rawText);
+        const allowed = new Set(stocks.map((s) => s.ticker.toUpperCase()));
+        const rationales = validateAndNormalizeRationales(parsed, allowed, model);
+
+        if (rationales.length === 0) {
+          return {
+            rationales: [],
+            providerUsed: 'gemini',
+            modelUsed: model,
+            error: 'Gemini response failed structured JSON validation.',
+          };
         }
-        throw err;
+
+        return {
+          rationales,
+          providerUsed: 'gemini',
+          modelUsed: model,
+        };
+      } catch (err) {
+        lastError = err;
+        if (isTransientDemandError(err)) {
+          if (attempt === 0) {
+            await new Promise((r) => setTimeout(r, 1000));
+            continue;
+          }
+          // Exhausted retries on this model; try next model in MODEL_CANDIDATES
+          break;
+        }
+        return {
+          rationales: [],
+          providerUsed: 'gemini',
+          modelUsed: model,
+          error: formatGeminiError(err),
+        };
       }
     }
-
-    const rawText = (response?.text ?? '[]').trim();
-    const parsed = JSON.parse(rawText);
-    const allowed = new Set(stocks.map((s) => s.ticker.toUpperCase()));
-    const rationales = validateAndNormalizeRationales(parsed, allowed, model);
-
-    if (rationales.length === 0) {
-      return {
-        rationales: [],
-        providerUsed: 'gemini',
-        modelUsed: model,
-        error: 'Gemini response failed structured JSON validation.',
-      };
-    }
-
-    return {
-      rationales,
-      providerUsed: 'gemini',
-      modelUsed: model,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unexpected Gemini API error';
-    return {
-      rationales: [],
-      providerUsed: 'gemini',
-      modelUsed: model,
-      error: message,
-    };
   }
+
+  return {
+    rationales: [],
+    providerUsed: 'gemini',
+    modelUsed: primaryModel,
+    error: formatGeminiError(lastError),
+  };
 }

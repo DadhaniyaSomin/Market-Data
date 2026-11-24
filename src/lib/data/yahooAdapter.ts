@@ -158,9 +158,10 @@ export class YahooMarketDataAdapter implements MarketDataProvider {
   readonly providerName = 'Yahoo Finance (v8 Chart API)';
 
   async getMarketContext(): Promise<MarketContext> {
-    const [nifty50, bankNifty, usClose, brentCrude, usdInr] = await Promise.all([
+    const [nifty50, bankNifty, indiaVix, usClose, brentCrude, usdInr] = await Promise.all([
       fetchIndexQuote('^NSEI', 'Nifty 50'),
       fetchIndexQuote('^NSEBANK', 'Bank Nifty'),
+      fetchIndexQuote('^INDIAVIX', 'India VIX'),
       fetchIndexQuote('^GSPC', 'US Close (S&P 500)'),
       fetchIndexQuote('BZ=F', 'Brent Crude ($/bbl)'),
       fetchIndexQuote('INR=X', 'USD / INR'),
@@ -205,6 +206,10 @@ export class YahooMarketDataAdapter implements MarketDataProvider {
         drivers.push(`Nifty ${nifty50.changePct.toFixed(2)}%`);
       }
     }
+    if (indiaVix.price !== null && indiaVix.price >= 20) {
+      riskScore -= 1;
+      drivers.push(`India VIX elevated (${indiaVix.price.toFixed(2)})`);
+    }
     if (brentCrude.changePct !== null && brentCrude.changePct > 2.5) {
       riskScore -= 1;
       drivers.push(`Brent crude spike +${brentCrude.changePct.toFixed(2)}%`);
@@ -220,12 +225,13 @@ export class YahooMarketDataAdapter implements MarketDataProvider {
     const riskRationale =
       drivers.length > 0
         ? drivers.join(' · ')
-        : 'Mixed macro cues across US close, crude, and INR';
+        : 'Mixed macro cues across US close, VIX, crude, and INR';
 
     return {
       giftNifty,
       nifty50,
       bankNifty,
+      indiaVix,
       usClose,
       brentCrude,
       usdInr,

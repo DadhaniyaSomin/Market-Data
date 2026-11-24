@@ -8,8 +8,11 @@ import {
 } from './components/ChecklistPanel.tsx';
 import { DashboardOverview } from './components/DashboardOverview.tsx';
 import { FilterBreakdownTable } from './components/FilterBreakdownTable.tsx';
+import { JournalView } from './components/JournalView.tsx';
 import { MarketContextBar } from './components/MarketContextBar.tsx';
+import { NewsView } from './components/NewsView.tsx';
 import { RawCandidatesTable } from './components/RawCandidatesTable.tsx';
+import { SectorRiskExposureWidget } from './components/SectorRiskExposureWidget.tsx';
 import { SettingsView, type ServerHealthStatus } from './components/SettingsView.tsx';
 import { ShortlistCards } from './components/ShortlistCards.tsx';
 import { Sidebar, type NavTab } from './components/Sidebar.tsx';
@@ -18,6 +21,7 @@ import type {
   AIRationaleItem,
   CapitalConfig,
   FilterConfig,
+  JournalEntry,
   ScanResponse,
 } from './lib/data/types.ts';
 import { DEFAULT_FILTER_CONFIG } from './lib/engine/filters.ts';
@@ -37,18 +41,24 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('preopen');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const [capitalConfig, setCapitalConfig] = useState<CapitalConfig>(() =>
-    readStoredJson('preopen_capital_v1', DEFAULT_CAPITAL_CONFIG),
-  );
-  const [filterConfig, setFilterConfig] = useState<FilterConfig>(() =>
-    readStoredJson('preopen_filter_v1', DEFAULT_FILTER_CONFIG),
-  );
+  const [capitalConfig, setCapitalConfig] = useState<CapitalConfig>(() => ({
+    ...DEFAULT_CAPITAL_CONFIG,
+    ...readStoredJson<Partial<CapitalConfig>>('preopen_capital_v1', DEFAULT_CAPITAL_CONFIG),
+  }));
+  const [filterConfig, setFilterConfig] = useState<FilterConfig>(() => ({
+    ...DEFAULT_FILTER_CONFIG,
+    ...readStoredJson<Partial<FilterConfig>>('preopen_filter_v1', DEFAULT_FILTER_CONFIG),
+  }));
   const [watchlist, setWatchlist] = useState<string[]>(() =>
     readStoredJson('preopen_watchlist_v1', ['RELIANCE.NS', 'HDFCBANK.NS', 'TCS.NS', 'SBIN.NS']),
   );
   const [checklist, setChecklist] = useState<ChecklistItem[]>(() =>
     readStoredJson('preopen_checklist_v1', DEFAULT_CHECKLIST),
   );
+  const [journal, setJournal] = useState<JournalEntry[]>(() =>
+    readStoredJson('preopen_journal_v1', []),
+  );
+  const [savedShortlistKey, setSavedShortlistKey] = useState<string | null>(null);
 
   const [scan, setScan] = useState<ScanResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -63,10 +73,11 @@ export default function App() {
       localStorage.setItem('preopen_filter_v1', JSON.stringify(filterConfig));
       localStorage.setItem('preopen_watchlist_v1', JSON.stringify(watchlist));
       localStorage.setItem('preopen_checklist_v1', JSON.stringify(checklist));
+      localStorage.setItem('preopen_journal_v1', JSON.stringify(journal));
     } catch {
       // Ignore storage quota errors
     }
-  }, [capitalConfig, filterConfig, watchlist, checklist]);
+  }, [capitalConfig, filterConfig, watchlist, checklist, journal]);
 
   useEffect(() => {
     fetch('/api/health')
@@ -208,14 +219,56 @@ export default function App() {
     setChecklist(DEFAULT_CHECKLIST.map((item) => ({ ...item, checked: false })));
   };
 
+  const handleSaveToJournal = () => {
+    if (!scan || scan.shortlist.length === 0) return;
+    const nowIso = new Date().toISOString();
+    const newEntries: JournalEntry[] = scan.shortlist.map((item) => ({
+      id: `${scan.generatedAt}-${item.evaluation.snapshot.meta.ticker}-${Math.random().toString(36).slice(2, 7)}`,
+      savedAt: nowIso,
+      sessionDate: scan.session.istDateDisplay,
+      ticker: item.evaluation.snapshot.meta.ticker,
+      name: item.evaluation.snapshot.meta.name,
+      sector: item.evaluation.snapshot.meta.sector,
+      direction: item.sizing.direction,
+      entry: item.sizing.entry,
+      stopLoss: item.sizing.stopLoss,
+      target: item.sizing.target,
+      quantity: item.sizing.quantity,
+      plannedRisk: item.sizing.plannedRisk,
+      score: item.evaluation.totalScore,
+      outcome: 'PENDING',
+      realizedPnl: null,
+      notes: '',
+    }));
+
+    setJournal((prev) => [...newEntries, ...prev]);
+    setSavedShortlistKey(scan.generatedAt);
+  };
+
+  const handleUpdateJournalEntry = (id: string, patch: Partial<JournalEntry>) => {
+    setJournal((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  };
+
+  const handleDeleteJournalEntry = (id: string) => {
+    setJournal((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  const handleClearJournal = () => {
+    setJournal([]);
+  };
+
   const pageTitle =
     activeTab === 'dashboard'
       ? 'Dashboard Overview'
       : activeTab === 'preopen'
         ? 'Intraday Pre-Open Scanner'
-        : activeTab === 'watchlist'
-          ? 'Watchlist'
-          : 'Scanner Settings';
+        : activeTab === 'news'
+          ? 'Latest Market News & AI Impact'
+          : activeTab === 'journal'
+            ? 'Trade Journal & Archive'
+            : activeTab === 'watchlist'
+              ? 'Watchlist'
+              : 'Scanner Settings';
 
   return (
     <div className="min-h-screen bg-[#0B0F17] text-slate-200 flex">
@@ -225,6 +278,7 @@ export default function App() {
         mobileOpen={mobileMenuOpen}
         onCloseMobile={() => setMobileMenuOpen(false)}
         watchlistCount={watchlist.length}
+        journalCount={journal.length}
       />
 
       <div className="flex-1 min-w-0 flex flex-col">
@@ -345,6 +399,7 @@ export default function App() {
           {scan && activeTab === 'dashboard' && (
             <DashboardOverview
               scan={scan}
+              totalCapital={capitalConfig.totalCapital}
               checklist={checklist}
               onGoToPreOpen={() => setActiveTab('preopen')}
             />
@@ -352,7 +407,10 @@ export default function App() {
 
           {scan && activeTab === 'preopen' && (
             <div className="space-y-6">
-              <MarketContextBar context={scan.marketContext} />
+              <MarketContextBar
+                context={scan.marketContext}
+                sectorBreadth={scan.sectorBreadth}
+              />
 
               <CapitalRiskPanel
                 config={capitalConfig}
@@ -378,11 +436,19 @@ export default function App() {
 
               <ShortlistCards
                 shortlist={scan.shortlist}
+                correlation={scan.correlation}
                 onGenerateRationale={handleGenerateRationale}
+                onSaveToJournal={handleSaveToJournal}
+                savedToJournal={savedShortlistKey === scan.generatedAt}
                 aiLoading={aiLoading}
                 aiError={aiError}
                 dataSource={scan.dataSource}
                 generatedAt={scan.generatedAt}
+              />
+
+              <SectorRiskExposureWidget
+                shortlist={scan.shortlist}
+                totalCapital={capitalConfig.totalCapital}
               />
 
               <ChecklistPanel
@@ -391,6 +457,19 @@ export default function App() {
                 onReset={resetChecklist}
               />
             </div>
+          )}
+
+          {activeTab === 'news' && (
+            <NewsView sectorBreadth={scan?.sectorBreadth ?? []} />
+          )}
+
+          {activeTab === 'journal' && (
+            <JournalView
+              entries={journal}
+              onUpdateEntry={handleUpdateJournalEntry}
+              onDeleteEntry={handleDeleteJournalEntry}
+              onClearAll={handleClearJournal}
+            />
           )}
 
           {scan && activeTab === 'watchlist' && (

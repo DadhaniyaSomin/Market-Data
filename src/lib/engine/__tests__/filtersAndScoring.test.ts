@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { OHLCVBar, StockMarketSnapshot, UniverseMeta } from '../../data/types.ts';
 import { DEFAULT_FILTER_CONFIG, evaluateFivePointFilter } from '../filters.ts';
 import { computeStockIndicators } from '../indicators.ts';
-import { evaluateUniverse, selectTopShortlist } from '../scoring.ts';
+import { computeSectorBreadth, evaluateUniverse, selectTopShortlist } from '../scoring.ts';
 
 function makeDailyBars(count: number, basePrice: number, dailyRangePct: number): OHLCVBar[] {
   const bars: OHLCVBar[] = [];
@@ -130,5 +130,35 @@ describe('5-Point Deterministic Filter & Scoring', () => {
 
     const shortlist = selectTopShortlist(evals, 4);
     assert.equal(shortlist.length, 0);
+  });
+
+  it('filters shortlist strictly to LONG setups when directionMode is LONG_ONLY and aggregates sector breadth', () => {
+    const longSnap = makeSnapshot(
+      { changePct: 1.8, price: 1018 },
+      { ticker: 'INFY', symbol: 'INFY.NS', sector: 'IT' },
+    );
+    const shortSnap = makeSnapshot(
+      {
+        price: 985,
+        changePct: -2.0,
+        intraday15mBars: make15mBars(1000, false),
+      },
+      { ticker: 'SBIN', symbol: 'SBIN.NS', sector: 'Banking' },
+    );
+
+    const evals = evaluateUniverse([longSnap, shortSnap], 0, []);
+    const both = selectTopShortlist(evals, 4, 'BOTH');
+    const longOnly = selectTopShortlist(evals, 4, 'LONG_ONLY');
+
+    assert.equal(both.length, 2);
+    assert.equal(longOnly.length, 1);
+    assert.equal(longOnly[0].snapshot.meta.ticker, 'INFY');
+
+    const breadth = computeSectorBreadth(evals);
+    assert.equal(breadth.length, 2);
+    assert.equal(breadth[0].sector, 'IT');
+    assert.equal(breadth[0].avgChangePct, 1.8);
+    assert.equal(breadth[1].sector, 'Banking');
+    assert.equal(breadth[1].avgChangePct, -2.0);
   });
 });

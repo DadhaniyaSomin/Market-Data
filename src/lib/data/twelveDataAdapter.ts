@@ -148,11 +148,12 @@ export class TwelveDataMarketDataAdapter implements MarketDataProvider {
     // Fetch baseline macro context from Yahoo fallback in parallel for indices unavailable on basic Twelve Data plans
     const yahooContext = await this.yahooFallback.getMarketContext();
 
-    const [usClose, usdInr, nifty50, bankNifty, brentCrude] = await Promise.all([
+    const [usClose, usdInr, nifty50, bankNifty, indiaVix, brentCrude] = await Promise.all([
       this.fetchMacroQuote('SPX', 'US Close (S&P 500)', yahooContext.usClose),
       this.fetchMacroQuote('USD/INR', 'USD / INR', yahooContext.usdInr),
       this.fetchMacroQuote('NIFTY:NSE', 'Nifty 50', yahooContext.nifty50),
       this.fetchMacroQuote('NIFTYBANK:NSE', 'Bank Nifty', yahooContext.bankNifty),
+      this.fetchMacroQuote('INDIAVIX:NSE', 'India VIX', yahooContext.indiaVix),
       this.fetchMacroQuote('WTI', 'Crude Oil ($/bbl)', yahooContext.brentCrude),
     ]);
 
@@ -192,6 +193,10 @@ export class TwelveDataMarketDataAdapter implements MarketDataProvider {
         drivers.push(`Nifty ${nifty50.changePct.toFixed(2)}%`);
       }
     }
+    if (indiaVix.price !== null && indiaVix.price >= 20) {
+      riskScore -= 1;
+      drivers.push(`India VIX elevated (${indiaVix.price.toFixed(2)})`);
+    }
     if (brentCrude.changePct !== null && brentCrude.changePct > 2.5) {
       riskScore -= 1;
       drivers.push(`Crude spike +${brentCrude.changePct.toFixed(2)}%`);
@@ -208,6 +213,7 @@ export class TwelveDataMarketDataAdapter implements MarketDataProvider {
       giftNifty,
       nifty50,
       bankNifty,
+      indiaVix,
       usClose,
       brentCrude,
       usdInr,
@@ -215,7 +221,7 @@ export class TwelveDataMarketDataAdapter implements MarketDataProvider {
       riskRationale:
         drivers.length > 0
           ? drivers.join(' · ')
-          : 'Mixed macro cues across US close, crude, and INR',
+          : 'Mixed macro cues across US close, VIX, crude, and INR',
       timestamp: new Date().toISOString(),
       source: this.providerName,
     };

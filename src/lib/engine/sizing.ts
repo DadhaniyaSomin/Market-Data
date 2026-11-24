@@ -4,6 +4,7 @@ export const DEFAULT_CAPITAL_CONFIG: CapitalConfig = {
   totalCapital: 500_000,
   riskPerTradePct: 1.0,
   maxStocks: 4,
+  directionMode: 'BOTH',
 };
 
 export function roundToTick(price: number, tick = 0.05): number {
@@ -13,7 +14,8 @@ export function roundToTick(price: number, tick = 0.05): number {
 /**
  * Computes deterministic intraday position sizing:
  * - risk_amount = capital * risk_pct
- * - stop_loss = entry +/- 1x ATR(15-min) OR beyond opening range (whichever is tighter yet logical)
+ * - stop_loss = entry +/- max(1x ATR(15-min), 0.30x Daily ATR(14), 0.5% min logical buffer)
+ *               OR beyond the 15-min opening range (if >= 0.5% away and tighter than the ATR stop)
  * - risk_per_share = |entry - stop_loss|
  * - target = entry +/- 2 * risk_per_share (1:2 R:R)
  * - quantity = floor(risk_amount / risk_per_share)
@@ -35,45 +37,49 @@ export function computePositionSizing(
       : snapshot.price;
   const entry = roundToTick(rawEntry);
 
-  const atr15 = Math.max(indicators.atr14_15m, entry * 0.0025);
-  const minLogicalRisk = roundToTick(Math.max(entry * 0.003, 0.25));
+  // A logical intraday stop must survive normal 15m noise:
+  // at least 1x ATR(15m), 0.30x Daily ATR(14), and 0.5% of price
+  const minLogicalRisk = roundToTick(Math.max(entry * 0.005, 0.25));
+  const atrRiskDist = roundToTick(
+    Math.max(indicators.atr14_15m, indicators.atr14Daily * 0.30, minLogicalRisk),
+  );
+  const usingAtr15mDirectly =
+    indicators.atr14_15m >= indicators.atr14Daily * 0.30 && indicators.atr14_15m >= minLogicalRisk;
 
   let stopLoss: number;
   let stopLossMethod: string;
 
   if (direction === 'LONG') {
-    const atrStop = roundToTick(entry - atr15);
+    const atrStop = roundToTick(entry - atrRiskDist);
     const orbStop =
-      indicators.orbLow !== null && indicators.orbLow < entry - minLogicalRisk
+      indicators.orbLow !== null && indicators.orbLow - 0.05 <= entry - minLogicalRisk
         ? roundToTick(indicators.orbLow - 0.05)
         : null;
 
     if (orbStop !== null && orbStop > atrStop) {
       stopLoss = orbStop;
-      stopLossMethod = '15m ORB Low (tighter than 1x ATR 15m)';
+      stopLossMethod = '15m ORB Low (tighter logical stop)';
     } else {
-      stopLoss = Math.min(atrStop, roundToTick(entry - minLogicalRisk));
-      stopLossMethod =
-        indicators.atr14_15mSource === '15m_bars'
-          ? '1x ATR(15-min)'
-          : '1x ATR(15-min scaled)';
+      stopLoss = atrStop;
+      stopLossMethod = usingAtr15mDirectly
+        ? '1x ATR(15-min)'
+        : '0.3x Daily ATR / 0.5% floor';
     }
   } else {
-    const atrStop = roundToTick(entry + atr15);
+    const atrStop = roundToTick(entry + atrRiskDist);
     const orbStop =
-      indicators.orbHigh !== null && indicators.orbHigh > entry + minLogicalRisk
+      indicators.orbHigh !== null && indicators.orbHigh + 0.05 >= entry + minLogicalRisk
         ? roundToTick(indicators.orbHigh + 0.05)
         : null;
 
     if (orbStop !== null && orbStop < atrStop) {
       stopLoss = orbStop;
-      stopLossMethod = '15m ORB High (tighter than 1x ATR 15m)';
+      stopLossMethod = '15m ORB High (tighter logical stop)';
     } else {
-      stopLoss = Math.max(atrStop, roundToTick(entry + minLogicalRisk));
-      stopLossMethod =
-        indicators.atr14_15mSource === '15m_bars'
-          ? '1x ATR(15-min)'
-          : '1x ATR(15-min scaled)';
+      stopLoss = atrStop;
+      stopLossMethod = usingAtr15mDirectly
+        ? '1x ATR(15-min)'
+        : '0.3x Daily ATR / 0.5% floor';
     }
   }
 

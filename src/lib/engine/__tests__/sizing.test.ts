@@ -70,6 +70,7 @@ describe('Position Sizing & Capital Cap', () => {
       totalCapital: 100_000,
       riskPerTradePct: 1.0, // risk_amount = 1,000
       maxStocks: 4, // max_capital_per_stock = (100,000 / 4) * 1.5 = 37,500
+      directionMode: 'BOTH',
     };
 
     const sizing = computePositionSizing(evalStock, capitalConfig, 4);
@@ -95,6 +96,7 @@ describe('Position Sizing & Capital Cap', () => {
       totalCapital: 500_000,
       riskPerTradePct: 1.0, // risk_amount = 5,000
       maxStocks: 4, // max_capital_per_stock = 187,500
+      directionMode: 'BOTH',
     };
 
     const sizing = computePositionSizing(evalStock, capitalConfig, 4);
@@ -110,5 +112,22 @@ describe('Position Sizing & Capital Cap', () => {
     assert.equal(sizingUncapped.plannedRisk, 5_000);
     assert.equal(sizingUncapped.target, 540);
     assert.ok(sizing.capitalCapped);
+  });
+
+  it('chooses ORB Low stop when tighter than ATR stop and >= 0.5% logical buffer', () => {
+    const evalStock = buildEvaluation(300, 2.5, 298.0, 'LONG');
+    const capitalConfig: CapitalConfig = {
+      totalCapital: 200_000,
+      riskPerTradePct: 1.0,
+      maxStocks: 4,
+      directionMode: 'BOTH',
+    };
+
+    const sizing = computePositionSizing(evalStock, capitalConfig, 4);
+    // orbLow = 298.0 -> orbStop = 297.95 (risk 2.05 = 0.68% >= 0.5%), tighter than atrStop (300 - 2.5 = 297.5)
+    assert.equal(sizing.stopLoss, 297.95);
+    assert.equal(sizing.riskPerShare, 2.05);
+    assert.equal(sizing.target, 304.1);
+    assert.ok(sizing.stopLossMethod.includes('ORB Low'));
   });
 });
